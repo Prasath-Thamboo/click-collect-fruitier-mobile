@@ -1,9 +1,10 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// Configurée dans .env (EXPO_PUBLIC_API_URL) — voir .env.example
 // Remplace par l'IP de ta machine sur le réseau local pour tester sur appareil physique
 // Ex: 'http://192.168.1.X:3000/api'
-const API_URL = 'http://10.0.2.2:3000/api'; // 10.0.2.2 = localhost depuis émulateur Android
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://10.0.2.2:3000/api'; // 10.0.2.2 = localhost depuis émulateur Android
 
 const api = axios.create({ baseURL: API_URL });
 

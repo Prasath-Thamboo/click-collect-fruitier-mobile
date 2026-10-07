@@ -5,17 +5,53 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { useStripe } from '@stripe/stripe-react-native';
 import { useCart } from '../../context/CartContext';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../api/axios';
+
+function minDate() {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + 30);
+  return d;
+}
 
 export default function CartScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { cart, updateQuantity, clearCart, total } = useCart();
-  const [pickupDate, setPickupDate] = useState('');
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
+  const [pickupDate, setPickupDate] = useState(minDate());
+  const [showPicker, setShowPicker] = useState(false); // iOS: shows combined datetime picker
+  const [androidPickerMode, setAndroidPickerMode] = useState(null); // Android: 'date' then 'time'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const openPicker = () => {
+    if (Platform.OS === 'android') setAndroidPickerMode('date');
+    else setShowPicker(true);
+  };
+
+  const handlePickerChange = (event, selected) => {
+    if (Platform.OS === 'android') {
+      if (event.type === 'dismissed' || !selected) { setAndroidPickerMode(null); return; }
+      if (androidPickerMode === 'date') {
+        const next = new Date(pickupDate);
+        next.setFullYear(selected.getFullYear(), selected.getMonth(), selected.getDate());
+        setPickupDate(next);
+        setAndroidPickerMode('time');
+      } else {
+        const next = new Date(pickupDate);
+        next.setHours(selected.getHours(), selected.getMinutes());
+        setPickupDate(next);
+        setAndroidPickerMode(null);
+      }
+      return;
+    }
+    setShowPicker(false);
+    if (selected) setPickupDate(selected);
+  };
 
   if (cart.items.length === 0) {
     return (
@@ -34,15 +70,37 @@ export default function CartScreen() {
     if (!user) return router.push('/(auth)/login');
     setError(''); setLoading(true);
     try {
+      const orderItems = cart.items.map((i) => ({ productId: i.id, quantity: i.quantity }));
+
+      const { data: intentData } = await api.post('/payments/create-intent', {
+        storeId: cart.storeId,
+        pickupDate: pickupDate.toISOString(),
+        items: orderItems,
+      });
+
+      const { error: initError } = await initPaymentSheet({
+        merchantDisplayName: 'Click & Collect',
+        paymentIntentClientSecret: intentData.clientSecret,
+      });
+      if (initError) throw new Error(initError.message);
+
+      const { error: presentError } = await presentPaymentSheet();
+      if (presentError) {
+        if (presentError.code !== 'Canceled') setError(presentError.message || 'Erreur lors du paiement.');
+        setLoading(false);
+        return;
+      }
+
       await api.post('/orders', {
         storeId: cart.storeId,
-        pickupDate: new Date().toISOString(), // simplifié — à améliorer avec un date picker
-        items: cart.items.map((i) => ({ productId: i.id, quantity: i.quantity })),
+        pickupDate: pickupDate.toISOString(),
+        items: orderItems,
+        paymentIntentId: intentData.paymentIntentId,
       });
       clearCart();
       router.push('/(tabs)/orders');
-    } catch {
-      setError('Erreur lors de la commande. Réessayez.');
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Erreur lors de la commande. Réessayez.');
     } finally {
       setLoading(false);
     }
@@ -78,6 +136,33 @@ export default function CartScreen() {
         ))}
 
         <View style={styles.summary}>
+          <Text style={styles.pickupLabel}>Date et heure de retrait</Text>
+          <TouchableOpacity style={styles.pickupButton} onPress={openPicker}>
+            <Text style={styles.pickupButtonText}>
+              {pickupDate.toLocaleString('fr-FR', {
+                weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+              })}
+            </Text>
+          </TouchableOpacity>
+          {Platform.OS === 'ios' && showPicker && (
+            <DateTimePicker
+              value={pickupDate}
+              mode="datetime"
+              minimumDate={minDate()}
+              is24Hour
+              onChange={handlePickerChange}
+            />
+          )}
+          {Platform.OS === 'android' && androidPickerMode && (
+            <DateTimePicker
+              value={pickupDate}
+              mode={androidPickerMode}
+              minimumDate={minDate()}
+              is24Hour
+              onChange={handlePickerChange}
+            />
+          )}
+
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>Total</Text>
             <Text style={styles.totalAmount}>{total.toFixed(2)} €</Text>
@@ -118,6 +203,9 @@ const styles = StyleSheet.create({
   qty: { fontSize: 16, fontWeight: '600', minWidth: 20, textAlign: 'center' },
   lineTotal: { textAlign: 'right', fontWeight: 'bold', color: '#111827', fontSize: 15 },
   summary: { backgroundColor: '#fff', borderRadius: 16, padding: 20, marginTop: 8, gap: 12, elevation: 2 },
+  pickupLabel: { fontSize: 13, color: '#374151', fontWeight: '500' },
+  pickupButton: { backgroundColor: '#f9fafb', borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14 },
+  pickupButtonText: { color: '#111827', fontWeight: '600', fontSize: 14 },
   totalRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   totalLabel: { fontSize: 16, color: '#374151', fontWeight: '500' },
   totalAmount: { fontSize: 24, fontWeight: 'bold', color: '#16a34a' },

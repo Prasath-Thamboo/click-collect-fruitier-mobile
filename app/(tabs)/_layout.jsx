@@ -70,6 +70,13 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="subscriptions"
+        options={{
+          tabBarIcon: ({ focused }) => <TabIcon emoji="🔄" label="Abonnements" focused={focused} />,
+          href: isStaff ? null : undefined,
+        }}
+      />
+      <Tabs.Screen
         name="account"
         options={{ tabBarIcon: ({ focused }) => <TabIcon emoji="👤" label="Compte" focused={focused} /> }}
       />
